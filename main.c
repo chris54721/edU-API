@@ -10,6 +10,7 @@
 #define MAX_LINE_LENGTH 1024
 #define INITIAL_BUFSIZE 1024
 
+/* Types */
 typedef char line[MAX_LINE_LENGTH + 1];
 
 typedef struct {
@@ -18,8 +19,11 @@ typedef struct {
     line* lines;
 } line_buffer;
 
+/* Globals */
 line_buffer buffer;
+long history_count = 0;
 
+/* Methods */
 void buffer_grow() {
     buffer.size *= 2;
     line* new_lines = realloc(buffer.lines, sizeof(line) * buffer.size);
@@ -34,23 +38,34 @@ void buffer_read() {
 }
 
 void cmd_change(long n1, long n2) {
+    fprintf(stderr, "cmd_change %ld %ld\n", n1, n2);
     // TODO
 }
 
 void cmd_delete(long n1, long n2) {
+    fprintf(stderr, "cmd_delete %ld %ld\n", n1, n2);
     // TODO
 }
 
 void cmd_print(long n1, long n2) {
+    fprintf(stderr, "cmd_print %ld %ld\n", n1, n2);
     // TODO
 }
 
 void cmd_undo(long n) {
+    fprintf(stderr, "cmd_undo %ld\n", n);
     // TODO
 }
 
 void cmd_redo(long n) {
+    fprintf(stderr, "cmd_redo %ld\n", n);
     // TODO
+}
+
+void history_move() {
+    if (history_count > 0) cmd_undo(history_count);
+    else cmd_redo(-history_count);
+    history_count = 0;
 }
 
 int parse_command() {
@@ -60,10 +75,10 @@ int parse_command() {
     if (input[0] == 'q') return 1;
     char* c;
     long n1 = strtol(input, &c, 10);
-    // TODO Possible optimization: merge consecutive undo/redo commands
-    if (*c == 'u') cmd_undo(n1);
-    else if (*c == 'r') cmd_redo(n1);
+    if (*c == 'u') history_count += n1;
+    else if (*c == 'r') history_count -= n1;
     else {
+        if (history_count != 0) history_move();
         long n2 = strtol(c + 1, &c, 10);
         if (*c == 'c') cmd_change(n1, n2);
         else if (*c == 'd') cmd_delete(n1, n2);
