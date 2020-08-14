@@ -5,17 +5,18 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <memory.h>
 
 #define MAX_CMD_LENGTH  32
 #define MAX_LINE_LENGTH 1024
-#define INITIAL_BUFSIZE 1024
+#define INITIAL_BUFSIZE 128
 
 /* Types */
 typedef char line[MAX_LINE_LENGTH + 1];
 
 typedef struct {
-    int size;
-    int length;
+    long size;
+    long length;
     line* lines;
 } line_buffer;
 
@@ -31,25 +32,34 @@ void buffer_grow() {
     buffer.lines = new_lines;
 }
 
-void buffer_read() {
-    if (buffer.length >= buffer.size) buffer_grow();
-    scanf("%s", buffer.lines[buffer.length]);
-    buffer.length++;
-}
-
 void cmd_change(long n1, long n2) {
-    fprintf(stderr, "cmd_change %ld %ld\n", n1, n2);
-    // TODO
+    if (n2 > buffer.size) buffer_grow();
+    if (n2 >= buffer.length) buffer.length = n2 + 1;
+    for (long i = n1; i <= n2; i++) {
+        fgets(buffer.lines[i], MAX_LINE_LENGTH, stdin);
+        buffer.lines[i][strcspn(buffer.lines[i], "\n")] = '\0';
+    }
+    scanf(".\n");
 }
 
 void cmd_delete(long n1, long n2) {
-    fprintf(stderr, "cmd_delete %ld %ld\n", n1, n2);
-    // TODO
+    if (n1 >= buffer.length) return;
+    if (n2 + 1 < buffer.length) {
+        memmove(buffer.lines[n1], buffer.lines[n2 + 1], sizeof(line) * (buffer.length - n2 - 1));
+        buffer.length -= (n2 - n1 + 1);
+    } else {
+        buffer.length = n1 + 1;
+    }
 }
 
 void cmd_print(long n1, long n2) {
-    fprintf(stderr, "cmd_print %ld %ld\n", n1, n2);
-    // TODO
+    for (long i = n1; i <= n2; i++) {
+        if (i < buffer.length) {
+            printf("%s\n", buffer.lines[i]);
+        } else {
+            printf(".\n");
+        }
+    }
 }
 
 void cmd_undo(long n) {
@@ -74,12 +84,12 @@ int parse_command() {
     fgets(input, MAX_CMD_LENGTH, stdin);
     if (input[0] == 'q') return 1;
     char* c;
-    long n1 = strtol(input, &c, 10);
+    long n1 = strtol(input, &c, 10) - 1;
     if (*c == 'u') history_count += n1;
     else if (*c == 'r') history_count -= n1;
     else {
         if (history_count != 0) history_move();
-        long n2 = strtol(c + 1, &c, 10);
+        long n2 = strtol(c + 1, &c, 10) - 1;
         if (*c == 'c') cmd_change(n1, n2);
         else if (*c == 'd') cmd_delete(n1, n2);
         else if (*c == 'p') cmd_print(n1, n2);
