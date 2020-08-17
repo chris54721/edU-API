@@ -9,7 +9,7 @@
 
 #define MAX_CMD_LENGTH  32
 #define MAX_LINE_LENGTH 1024
-#define INITIAL_BUFSIZE 128
+#define INITIAL_BUFSIZE 1024
 
 /* Types */
 typedef char line[MAX_LINE_LENGTH + 1];
@@ -40,7 +40,7 @@ history_entry* redo_history = NULL;
 
 /* Methods */
 void buffer_grow() {
-    text.size += 128;
+    text.size *= 2;
     line** new_lines = realloc(text.lines, sizeof(line*) * text.size);
     if (new_lines == NULL) exit(1);
     text.lines = new_lines;
@@ -54,24 +54,14 @@ void history_swap(history_entry* entry) {
     }
 }
 
-void history_undo_clear() {
-    while (undo_history != NULL) {
-        history_entry* cur = undo_history;
-        for (int i = 0; i < (cur->n2 - cur->n1 + 1); i++) {
-            free(*cur->buffer[i]);
-        }
-        undo_history = undo_history->prev;
-        free(cur);
-    }
-}
-
 void history_redo_clear() {
     while (redo_history != NULL) {
         history_entry* cur = redo_history;
+        redo_history = redo_history->prev;
         for (int i = 0; i < (cur->n2 - cur->n1 + 1); i++) {
             free(*cur->buffer[i]);
         }
-        redo_history = redo_history->prev;
+        free(cur->buffer);
         free(cur);
     }
 }
@@ -81,8 +71,9 @@ void history_push(enum history_action action, long n1, long n2) {
     long copy_length = n2 - n1 + 1;
     line** buffer = calloc(copy_length, sizeof(line*));
     if (n1 + copy_length > text.length) copy_length = text.length - n1;
-    if (copy_length < 0) copy_length = 0;
-    memcpy(buffer, &text.lines[n1], sizeof(line*) * copy_length);
+    if (copy_length > 0) {
+        memcpy(buffer, &text.lines[n1], sizeof(line*) * copy_length);
+    }
     history_entry* prev = undo_history;
     undo_history = malloc(sizeof(history_entry));
     *undo_history = (history_entry) {
@@ -111,7 +102,7 @@ void text_delete(long n1, long n2) {
 
 void cmd_change(long n1, long n2) {
     history_push(CHANGE, n1, n2);
-    if (n2 > text.size) buffer_grow();
+    while (n2 > text.size) buffer_grow();
     if (n2 >= text.length) text.length = n2 + 1;
     for (long i = n1; i <= n2; i++) {
         line* l = malloc(sizeof(line));
@@ -204,7 +195,6 @@ int parse_command() {
 }
 
 void cleanup() {
-    history_undo_clear();
     history_redo_clear();
     free(text.lines);
 }
