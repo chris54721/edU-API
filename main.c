@@ -7,16 +7,16 @@
 #include <stdio.h>
 #include <memory.h>
 
-#define MAX_CMD_LENGTH  32
+#define MAX_CMD_LENGTH  16
 #define MAX_LINE_LENGTH 1024
-#define INITIAL_BUFSIZE 1024
+#define INITIAL_BUFSIZE 512
 
 /* Types */
 typedef char line[MAX_LINE_LENGTH + 1];
 
 typedef struct {
-    long size;
-    long length;
+    int size;
+    int length;
     line** lines;
 } line_buffer;
 
@@ -24,9 +24,9 @@ enum history_action { CHANGE, DELETE };
 
 typedef struct history_entry {
     enum history_action action;
-    long n1;
-    long n2;
-    long prev_length;
+    int n1;
+    int n2;
+    int prev_length;
     line** buffer;
 
     struct history_entry* prev;
@@ -34,7 +34,7 @@ typedef struct history_entry {
 
 /* Globals */
 line_buffer text;
-long history_count = 0;
+int history_count = 0;
 history_entry* undo_history = NULL;
 history_entry* redo_history = NULL;
 
@@ -47,7 +47,7 @@ void buffer_grow() {
 }
 
 void history_swap(history_entry* entry) {
-    for (long i = entry->n1; i <= entry->n2; i++) {
+    for (int i = entry->n1; i <= entry->n2; i++) {
         line* tmp = entry->buffer[i - entry->n1];
         entry->buffer[i - entry->n1] = text.lines[i];
         text.lines[i] = tmp;
@@ -66,9 +66,9 @@ void history_redo_clear() {
     }
 }
 
-void history_push(enum history_action action, long n1, long n2) {
+void history_push(enum history_action action, int n1, int n2) {
     history_redo_clear();
-    long copy_length = n2 - n1 + 1;
+    int copy_length = n2 - n1 + 1;
     line** buffer = calloc(copy_length, sizeof(line*));
     if (n1 + copy_length > text.length) copy_length = text.length - n1;
     if (copy_length > 0) {
@@ -86,7 +86,7 @@ void history_push(enum history_action action, long n1, long n2) {
     };
 }
 
-void text_delete(long n1, long n2) {
+void text_delete(int n1, int n2) {
     if (n1 >= text.length) return;
     if (n2 + 1 < text.length) {
         memmove(
@@ -96,45 +96,43 @@ void text_delete(long n1, long n2) {
         );
         text.length -= (n2 - n1 + 1);
     } else {
-        text.length = n1 + 1;
+        text.length = n1;
     }
 }
 
-void cmd_change(long n1, long n2) {
+void cmd_change(int n1, int n2) {
     history_push(CHANGE, n1, n2);
     while (n2 > text.size) buffer_grow();
     if (n2 >= text.length) text.length = n2 + 1;
-    for (long i = n1; i <= n2; i++) {
-        line* l = malloc(sizeof(line));
-        fgets(*l, MAX_LINE_LENGTH, stdin);
-        (*l)[strcspn(*l, "\n")] = '\0';
-        text.lines[i] = l;
+    for (int i = n1; i <= n2; i++) {
+        text.lines[i] = malloc(sizeof(line));
+        fgets(*text.lines[i], MAX_LINE_LENGTH, stdin);
     }
     scanf(".\n");
 }
 
-void cmd_delete(long n1, long n2) {
+void cmd_delete(int n1, int n2) {
     history_push(DELETE, n1, n2);
     text_delete(n1, n2);
 }
 
-void cmd_print(long n1, long n2) {
-    for (long i = n1; i <= n2; i++) {
+void cmd_print(int n1, int n2) {
+    for (int i = n1; i <= n2; i++) {
         if (i >= 0 && i < text.length && text.lines[i] != NULL) {
-            printf("%s\n", *text.lines[i]);
+            fputs(*text.lines[i], stdout);
         } else {
-            printf(".\n");
+            fputs(".\n", stdout);
         }
     }
 }
 
-void cmd_undo(long n) {
+void cmd_undo(int n) {
     history_entry* cur;
     while ((cur = undo_history) != NULL && n-- > 0) {
         if (cur->action == CHANGE) {
             history_swap(cur);
         } else {
-            long buf_length = cur->n2 - cur->n1 + 1;
+            int buf_length = cur->n2 - cur->n1 + 1;
             if (cur->n1 < text.length) {
                 memmove(
                     &text.lines[cur->n2 + 1],
@@ -151,7 +149,7 @@ void cmd_undo(long n) {
     }
 }
 
-void cmd_redo(long n) {
+void cmd_redo(int n) {
     history_entry* cur;
     while ((cur = redo_history) != NULL && n-- > 0) {
         if (cur->action == CHANGE) {
@@ -180,13 +178,13 @@ int parse_command() {
     #endif
     if (input[0] == 'q') return 1;
     char* c;
-    long n1 = strtol(input, &c, 10);
+    int n1 = (int) strtol(input, &c, 10);
     if (*c == 'u') history_count += n1;
     else if (*c == 'r') history_count -= n1;
     else {
         if (history_count != 0) history_move();
         n1 -= 1;
-        long n2 = strtol(c + 1, &c, 10) - 1;
+        int n2 = (int) strtol(c + 1, &c, 10) - 1;
         if (*c == 'c') cmd_change(n1, n2);
         else if (*c == 'd') cmd_delete(n1, n2);
         else if (*c == 'p') cmd_print(n1, n2);
