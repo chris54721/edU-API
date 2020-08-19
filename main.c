@@ -35,8 +35,10 @@ typedef struct history_entry {
 /* Globals */
 line_buffer text;
 int history_count = 0;
-history_entry* undo_history = NULL;
-history_entry* redo_history = NULL;
+int history_undo_size = 0;
+int history_redo_size = 0;
+history_entry* history_undo = NULL;
+history_entry* history_redo = NULL;
 
 /* Methods */
 void buffer_grow() {
@@ -54,27 +56,28 @@ void history_swap(history_entry* entry) {
     }
 }
 
+void history_save_length(history_entry* entry) {
+    int curr_len = text.length;
+    text.length = entry->prev_length;
+    entry->prev_length = curr_len;
+}
+
 void history_undo_clear() {
-    while (undo_history != NULL) {
-        history_entry* cur = undo_history;
-        for (int i = 0; i < (cur->n2 - cur->n1 + 1); i++) {
-            free(cur->buffer[i]);
-        }
-        undo_history = undo_history->prev;
+    while (history_undo != NULL) {
+        history_entry* cur = history_undo;
+        history_undo = history_undo->prev;
         free(cur);
     }
+    history_undo_size = 0;
 }
 
 void history_redo_clear() {
-    while (redo_history != NULL) {
-        history_entry* cur = redo_history;
-        redo_history = redo_history->prev;
-        for (int i = 0; i < (cur->n2 - cur->n1 + 1); i++) {
-            free(cur->buffer[i]);
-        }
-        free(cur->buffer);
+    while (history_redo != NULL) {
+        history_entry* cur = history_redo;
+        history_redo = history_redo->prev;
         free(cur);
     }
+    history_redo_size = 0;
 }
 
 void history_push(enum history_action action, int n1, int n2) {
@@ -85,9 +88,9 @@ void history_push(enum history_action action, int n1, int n2) {
     if (copy_length > 0) {
         memcpy(buffer, &text.lines[n1], sizeof(line) * copy_length);
     }
-    history_entry* prev = undo_history;
-    undo_history = malloc(sizeof(history_entry));
-    *undo_history = (history_entry) {
+    history_entry* prev = history_undo;
+    history_undo = malloc(sizeof(history_entry));
+    *history_undo = (history_entry) {
         .action = action,
         .n1 = n1,
         .n2 = n2,
@@ -95,6 +98,7 @@ void history_push(enum history_action action, int n1, int n2) {
         .prev_length = text.length,
         .prev = prev
     };
+    history_undo_size++;
 }
 
 void text_delete(int n1, int n2) {
@@ -140,7 +144,7 @@ void cmd_print(int n1, int n2) {
 
 void cmd_undo(int n) {
     history_entry* cur;
-    while ((cur = undo_history) != NULL && n-- > 0) {
+    while ((cur = history_undo) != NULL && n-- > 0) {
         if (cur->action == CHANGE) {
             history_swap(cur);
         } else {
@@ -149,35 +153,44 @@ void cmd_undo(int n) {
                 memmove(
                     &text.lines[cur->n2 + 1],
                     &text.lines[cur->n1],
-                    sizeof(line) * (text.length - cur->n1 - 1)
+                    sizeof(line) * (text.length - cur->n1)
                 );
             }
             memcpy(&text.lines[cur->n1], cur->buffer, sizeof(line) * buf_length);
         }
-        text.length = cur->prev_length;
-        undo_history = undo_history->prev;
-        cur->prev = redo_history;
-        redo_history = cur;
+        history_save_length(cur);
+        history_undo = history_undo->prev;
+        cur->prev = history_redo;
+        history_redo = cur;
     }
 }
 
 void cmd_redo(int n) {
     history_entry* cur;
-    while ((cur = redo_history) != NULL && n-- > 0) {
+    while ((cur = history_redo) != NULL && n-- > 0) {
         if (cur->action == CHANGE) {
             history_swap(cur);
+            history_save_length(cur);
         } else {
             text_delete(cur->n1, cur->n2);
         }
-        redo_history = redo_history->prev;
-        cur->prev = undo_history;
-        undo_history = cur;
+        history_redo = history_redo->prev;
+        cur->prev = history_undo;
+        history_undo = cur;
     }
 }
 
 void history_move() {
-    if (history_count > 0) cmd_undo(history_count);
-    else cmd_redo(-history_count);
+    #ifdef DEBUG
+        fprintf(stderr, "history_move: %d\n", history_count);
+    #endif
+    if (history_count > 0) {
+        cmd_undo(history_count);
+    } else {
+        cmd_redo(-history_count);
+    }
+    history_undo_size -= history_count;
+    history_redo_size += history_count;
     history_count = 0;
 }
 
@@ -186,18 +199,23 @@ int parse_command() {
     char input[MAX_CMD_LENGTH];
     fgets(input, MAX_CMD_LENGTH, stdin);
     #ifdef DEBUG
-        //fputs(input, stderr);
+        fputs(input, stderr);
     #endif
     if (input[0] == 'q') return 1;
     char* c;
     int n1 = (int) strtol(input, &c, 10);
-    if (*c == 'u') history_count += n1;
-    else if (*c == 'r') history_count -= n1;
-    else {
+    if (*c == 'u') {
+        history_count += n1;
+        if (history_count > history_undo_size) history_count = history_undo_size;
+    } else if (*c == 'r') {
+        history_count -= n1;
+        if (-history_count > history_redo_size) history_count = -history_redo_size;
+    } else {
         if (history_count != 0) history_move();
         n1 -= 1;
         int n2 = (int) strtol(c + 1, &c, 10) - 1;
         if (*c == 'c') cmd_change(n1, n2);
+
         else if (*c == 'd') cmd_delete(n1, n2);
         else if (*c == 'p') cmd_print(n1, n2);
     }
