@@ -7,12 +7,12 @@
 #include <stdio.h>
 #include <memory.h>
 
-#define MAX_CMD_LENGTH  16
-#define MAX_LINE_LENGTH 1024
-#define INITIAL_BUFSIZE 512
+#define MAX_CMD_LENGTH    16
+#define MAX_LINE_LENGTH   1024
+#define INITIAL_TEXT_SIZE 512
 
 /* Types */
-typedef char line[MAX_LINE_LENGTH + 1];
+typedef char line[MAX_LINE_LENGTH + 2];
 
 typedef struct {
     int size;
@@ -42,15 +42,26 @@ history_entry* redo_history = NULL;
 void buffer_grow() {
     text.size *= 2;
     line** new_lines = realloc(text.lines, sizeof(line*) * text.size);
-    if (new_lines == NULL) exit(1);
+    if (new_lines == NULL) exit(16);
     text.lines = new_lines;
 }
 
 void history_swap(history_entry* entry) {
     for (int i = entry->n1; i <= entry->n2; i++) {
-        line* tmp = entry->buffer[i - entry->n1];
+        line *tmp = entry->buffer[i - entry->n1];
         entry->buffer[i - entry->n1] = text.lines[i];
         text.lines[i] = tmp;
+    }
+}
+
+void history_undo_clear() {
+    while (undo_history != NULL) {
+        history_entry* cur = undo_history;
+        for (int i = 0; i < (cur->n2 - cur->n1 + 1); i++) {
+            free(cur->buffer[i]);
+        }
+        undo_history = undo_history->prev;
+        free(cur);
     }
 }
 
@@ -59,7 +70,7 @@ void history_redo_clear() {
         history_entry* cur = redo_history;
         redo_history = redo_history->prev;
         for (int i = 0; i < (cur->n2 - cur->n1 + 1); i++) {
-            free(*cur->buffer[i]);
+            free(cur->buffer[i]);
         }
         free(cur->buffer);
         free(cur);
@@ -106,7 +117,8 @@ void cmd_change(int n1, int n2) {
     if (n2 >= text.length) text.length = n2 + 1;
     for (int i = n1; i <= n2; i++) {
         text.lines[i] = malloc(sizeof(line));
-        fgets(*text.lines[i], MAX_LINE_LENGTH, stdin);
+        fgets(*text.lines[i], MAX_LINE_LENGTH + 2, stdin);
+        text.lines[i] = realloc(text.lines[i], strlen(*text.lines[i]) + 1);
     }
     scanf(".\n");
 }
@@ -174,7 +186,7 @@ int parse_command() {
     char input[MAX_CMD_LENGTH];
     fgets(input, MAX_CMD_LENGTH, stdin);
     #ifdef DEBUG
-        fputs(input, stderr);
+        //fputs(input, stderr);
     #endif
     if (input[0] == 'q') return 1;
     char* c;
@@ -193,12 +205,16 @@ int parse_command() {
 }
 
 void cleanup() {
+    history_undo_clear();
     history_redo_clear();
+    for (int i = 0; i < text.length; i++) {
+        free(*text.lines[i]);
+    }
     free(text.lines);
 }
 
 int main() {
-    text = (line_buffer) { .size = INITIAL_BUFSIZE, .length = 0, .lines = malloc(sizeof(line*) * INITIAL_BUFSIZE) };
+    text = (line_buffer) { .size = INITIAL_TEXT_SIZE, .length = 0, .lines = calloc(INITIAL_TEXT_SIZE, sizeof(line*)) };
 
     int quit;
     do {

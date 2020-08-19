@@ -5,4 +5,4 @@ set(CMAKE_C_STANDARD 11)
 
 add_executable(edU_API main.c)
 
-target_compile_options(edU_API PRIVATE -DEVAL -std=gnu11 -O2 -pipe -static -s -lm)
+target_compile_options(edU_API PRIVATE -DDEBUG -DEVAL -std=gnu11 -pipe -static -s -lm)
