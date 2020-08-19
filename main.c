@@ -12,12 +12,12 @@
 #define INITIAL_TEXT_SIZE 512
 
 /* Types */
-typedef char line[MAX_LINE_LENGTH + 2];
+typedef char* line;
 
 typedef struct {
     int size;
     int length;
-    line** lines;
+    line* lines;
 } line_buffer;
 
 enum history_action { CHANGE, DELETE };
@@ -27,7 +27,7 @@ typedef struct history_entry {
     int n1;
     int n2;
     int prev_length;
-    line** buffer;
+    line* buffer;
 
     struct history_entry* prev;
 } history_entry;
@@ -41,14 +41,14 @@ history_entry* redo_history = NULL;
 /* Methods */
 void buffer_grow() {
     text.size *= 2;
-    line** new_lines = realloc(text.lines, sizeof(line*) * text.size);
+    line* new_lines = realloc(text.lines, sizeof(line) * text.size);
     if (new_lines == NULL) exit(16);
     text.lines = new_lines;
 }
 
 void history_swap(history_entry* entry) {
     for (int i = entry->n1; i <= entry->n2; i++) {
-        line *tmp = entry->buffer[i - entry->n1];
+        line tmp = entry->buffer[i - entry->n1];
         entry->buffer[i - entry->n1] = text.lines[i];
         text.lines[i] = tmp;
     }
@@ -80,10 +80,10 @@ void history_redo_clear() {
 void history_push(enum history_action action, int n1, int n2) {
     history_redo_clear();
     int copy_length = n2 - n1 + 1;
-    line** buffer = calloc(copy_length, sizeof(line*));
+    line* buffer = calloc(copy_length, sizeof(line));
     if (n1 + copy_length > text.length) copy_length = text.length - n1;
     if (copy_length > 0) {
-        memcpy(buffer, &text.lines[n1], sizeof(line*) * copy_length);
+        memcpy(buffer, &text.lines[n1], sizeof(line) * copy_length);
     }
     history_entry* prev = undo_history;
     undo_history = malloc(sizeof(history_entry));
@@ -103,7 +103,7 @@ void text_delete(int n1, int n2) {
         memmove(
                 &text.lines[n1],
                 &text.lines[n2 + 1],
-                sizeof(line*) * (text.length - n2 - 1)
+                sizeof(line) * (text.length - n2 - 1)
         );
         text.length -= (n2 - n1 + 1);
     } else {
@@ -116,9 +116,9 @@ void cmd_change(int n1, int n2) {
     while (n2 > text.size) buffer_grow();
     if (n2 >= text.length) text.length = n2 + 1;
     for (int i = n1; i <= n2; i++) {
-        text.lines[i] = malloc(sizeof(line));
-        fgets(*text.lines[i], MAX_LINE_LENGTH + 2, stdin);
-        text.lines[i] = realloc(text.lines[i], strlen(*text.lines[i]) + 1);
+        text.lines[i] = malloc(MAX_LINE_LENGTH + 2);
+        fgets(text.lines[i], MAX_LINE_LENGTH + 2, stdin);
+        text.lines[i] = realloc(text.lines[i], strlen(text.lines[i]) + 1);
     }
     scanf(".\n");
 }
@@ -131,7 +131,7 @@ void cmd_delete(int n1, int n2) {
 void cmd_print(int n1, int n2) {
     for (int i = n1; i <= n2; i++) {
         if (i >= 0 && i < text.length && text.lines[i] != NULL) {
-            fputs(*text.lines[i], stdout);
+            fputs(text.lines[i], stdout);
         } else {
             fputs(".\n", stdout);
         }
@@ -149,10 +149,10 @@ void cmd_undo(int n) {
                 memmove(
                     &text.lines[cur->n2 + 1],
                     &text.lines[cur->n1],
-                    sizeof(line*) * (text.length - cur->n1 - 1)
+                    sizeof(line) * (text.length - cur->n1 - 1)
                 );
             }
-            memcpy(&text.lines[cur->n1], cur->buffer, sizeof(line*) * buf_length);
+            memcpy(&text.lines[cur->n1], cur->buffer, sizeof(line) * buf_length);
         }
         text.length = cur->prev_length;
         undo_history = undo_history->prev;
@@ -208,13 +208,13 @@ void cleanup() {
     history_undo_clear();
     history_redo_clear();
     for (int i = 0; i < text.length; i++) {
-        free(*text.lines[i]);
+        free(text.lines[i]);
     }
     free(text.lines);
 }
 
 int main() {
-    text = (line_buffer) { .size = INITIAL_TEXT_SIZE, .length = 0, .lines = calloc(INITIAL_TEXT_SIZE, sizeof(line*)) };
+    text = (line_buffer) { .size = INITIAL_TEXT_SIZE, .length = 0, .lines = calloc(INITIAL_TEXT_SIZE, sizeof(line)) };
 
     int quit;
     do {
