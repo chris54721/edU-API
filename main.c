@@ -56,12 +56,6 @@ void history_swap(history_entry* entry) {
     }
 }
 
-void history_save_length(history_entry* entry) {
-    int curr_len = text.length;
-    text.length = entry->prev_length;
-    entry->prev_length = curr_len;
-}
-
 void history_undo_clear() {
     while (history_undo != NULL) {
         history_entry* cur = history_undo;
@@ -158,7 +152,9 @@ void cmd_undo(int n) {
             }
             memcpy(&text.lines[cur->n1], cur->buffer, sizeof(line) * buf_length);
         }
-        history_save_length(cur);
+        int curr_len = text.length;
+        text.length = cur->prev_length;
+        cur->prev_length = curr_len;
         history_undo = history_undo->prev;
         cur->prev = history_redo;
         history_redo = cur;
@@ -168,12 +164,14 @@ void cmd_undo(int n) {
 void cmd_redo(int n) {
     history_entry* cur;
     while ((cur = history_redo) != NULL && n-- > 0) {
+        int curr_len = text.length;
         if (cur->action == CHANGE) {
             history_swap(cur);
-            history_save_length(cur);
         } else {
             text_delete(cur->n1, cur->n2);
         }
+        text.length = cur->prev_length;
+        cur->prev_length = curr_len;
         history_redo = history_redo->prev;
         cur->prev = history_undo;
         history_undo = cur;
@@ -182,7 +180,7 @@ void cmd_redo(int n) {
 
 void history_move() {
     #ifdef DEBUG
-        fprintf(stderr, "history_move: %d\n", history_count);
+        fprintf(stdout, ">>> history_move: %d\n", history_count);
     #endif
     if (history_count > 0) {
         cmd_undo(history_count);
@@ -199,7 +197,7 @@ int parse_command() {
     char input[MAX_CMD_LENGTH];
     fgets(input, MAX_CMD_LENGTH, stdin);
     #ifdef DEBUG
-        fputs(input, stderr);
+        fputs(input, stdout);
     #endif
     if (input[0] == 'q') return 1;
     char* c;
