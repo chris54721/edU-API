@@ -28,6 +28,7 @@ typedef struct history_entry {
     int n2;
     int prev_length;
     line* buffer;
+    int buf_length;
 
     struct history_entry* prev;
 } history_entry;
@@ -48,11 +49,18 @@ void buffer_grow() {
     text.lines = new_lines;
 }
 
-void history_swap(history_entry* entry) {
-    for (int i = entry->n1; i <= entry->n2; i++) {
-        line tmp = entry->buffer[i - entry->n1];
-        entry->buffer[i - entry->n1] = text.lines[i];
-        text.lines[i] = tmp;
+void history_swap(history_entry* entry, int is_redo) {
+    for (int i = 0; i < entry->buf_length; i++) {
+        line tmp = entry->buffer[i];
+        entry->buffer[i] = text.lines[entry->n1 + i];
+        text.lines[entry->n1 + i] = tmp;
+    }
+    int zero_len = (entry->n2 - entry->n1 + 1) - entry->buf_length;
+    if (zero_len > 0) {
+        line* source = is_redo ? &entry->buffer[entry->buf_length] : &text.lines[entry->n1 + entry->buf_length];
+        line* copy_to = is_redo ? &text.lines[entry->n1 + entry->buf_length] : &entry->buffer[entry->buf_length];
+        memcpy(copy_to, source, sizeof(line) * zero_len);
+        memset(source, 0, sizeof(line) * zero_len);
     }
 }
 
@@ -76,24 +84,33 @@ void history_redo_clear() {
 
 void history_push(enum history_action action, int n1, int n2) {
     history_redo_clear();
-    int len = n2 - n1 + 1;
-    line* buffer = malloc(sizeof(line) * len);
+    int block_length = n2 - n1 + 1;
+    line* buffer;
+    int buf_length;
 
-    // Copy the first part of the buffer (until the end of the original text)
-    int copy_len;
-    if (n1 + len > text.length) {
-        copy_len = text.length - n1;
+    if (n1 + block_length > text.length) {
+        buf_length = text.length - n1;
     } else {
-        copy_len = len;
+        buf_length = block_length;
     }
-    if (copy_len < 0) copy_len = 0;
-    memcpy(buffer, &text.lines[n1], sizeof(line) * copy_len);
+    if (buf_length < 0) buf_length = 0;
 
-    // Zero the remaining part of the buffer. Needed for history_swap (avoids reallocating)
-    int zero_len = len - copy_len;
-    if (zero_len > 0) {
-        memset(buffer + copy_len, 0, sizeof(line) * zero_len);
+    if (action == CHANGE) {
+        // Allocate a full-sized buffer and zero the excess area (needed for history_swap)
+        buffer = malloc(sizeof(line) * block_length);
+        int zero_length = block_length - buf_length;
+        if (zero_length > 0) {
+            memset(&buffer[buf_length], 0, sizeof(line) * zero_length);
+        }
+    } else {
+        if (buf_length > 0) {
+            buffer = malloc(sizeof(line) * buf_length);
+        } else {
+            buffer = NULL;
+        }
     }
+
+    memcpy(buffer, &text.lines[n1], sizeof(line) * buf_length);
 
     history_entry* prev = history_undo;
     history_undo = malloc(sizeof(history_entry));
@@ -101,8 +118,9 @@ void history_push(enum history_action action, int n1, int n2) {
         .action = action,
         .n1 = n1,
         .n2 = n2,
-        .buffer = buffer,
         .prev_length = text.length,
+        .buffer = buffer,
+        .buf_length = buf_length,
         .prev = prev
     };
     history_undo_size++;
@@ -156,9 +174,9 @@ void cmd_undo(int n) {
     while ((cur = history_undo) != NULL && n-- > 0) {
         int curr_len = text.length;
         if (cur->action == CHANGE) {
-            history_swap(cur);
+            history_swap(cur, 0);
         } else {
-            int buf_length = cur->n2 - cur->n1 + 1;
+            int block_length = cur->n2 - cur->n1 + 1;
             if (cur->n1 < text.length) {
                 memmove(
                     &text.lines[cur->n2 + 1],
@@ -166,7 +184,10 @@ void cmd_undo(int n) {
                     sizeof(line) * (text.length - cur->n1)
                 );
             }
-            memcpy(&text.lines[cur->n1], cur->buffer, sizeof(line) * buf_length);
+            if (cur->buffer != NULL) {
+                memcpy(&text.lines[cur->n1], cur->buffer, sizeof(line) * cur->buf_length);
+            }
+            memset(&text.lines[cur->n1 + block_length], 0, sizeof(line) * (block_length - cur->buf_length));
         }
         text.length = cur->prev_length;
         cur->prev_length = curr_len;
@@ -181,7 +202,7 @@ void cmd_redo(int n) {
     while ((cur = history_redo) != NULL && n-- > 0) {
         int curr_len = text.length;
         if (cur->action == CHANGE) {
-            history_swap(cur);
+            history_swap(cur, 1);
         } else {
             text_delete(cur->n1, cur->n2);
         }
@@ -210,7 +231,7 @@ void history_move() {
 int parse_command() {
     // Assumption: input is not malformed
     char input[MAX_CMD_LENGTH];
-    fgets(input, MAX_CMD_LENGTH, stdin);
+    (void) fgets(input, MAX_CMD_LENGTH, stdin);
     #ifdef DEBUG
         fputs(input, stdout);
     #endif
