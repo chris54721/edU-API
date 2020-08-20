@@ -76,12 +76,25 @@ void history_redo_clear() {
 
 void history_push(enum history_action action, int n1, int n2) {
     history_redo_clear();
-    int copy_length = n2 - n1 + 1;
-    line* buffer = calloc(copy_length, sizeof(line));
-    if (n1 + copy_length > text.length) copy_length = text.length - n1;
-    if (copy_length > 0) {
-        memcpy(buffer, &text.lines[n1], sizeof(line) * copy_length);
+    int len = n2 - n1 + 1;
+    line* buffer = malloc(sizeof(line) * len);
+
+    // Copy the first part of the buffer (until the end of the original text)
+    int copy_len;
+    if (n1 + len > text.length) {
+        copy_len = text.length - n1;
+    } else {
+        copy_len = len;
     }
+    if (copy_len < 0) copy_len = 0;
+    memcpy(buffer, &text.lines[n1], sizeof(line) * copy_len);
+
+    // Zero the remaining part of the buffer. Needed for history_swap (avoids reallocating)
+    int zero_len = len - copy_len;
+    if (zero_len > 0) {
+        memset(buffer + copy_len, 0, sizeof(line) * zero_len);
+    }
+
     history_entry* prev = history_undo;
     history_undo = malloc(sizeof(history_entry));
     *history_undo = (history_entry) {
@@ -114,11 +127,13 @@ void cmd_change(int n1, int n2) {
     while (n2 > text.size) buffer_grow();
     if (n2 >= text.length) text.length = n2 + 1;
     for (int i = n1; i <= n2; i++) {
-        text.lines[i] = malloc(MAX_LINE_LENGTH + 2);
-        fgets(text.lines[i], MAX_LINE_LENGTH + 2, stdin);
-        text.lines[i] = realloc(text.lines[i], strlen(text.lines[i]) + 1);
+        size_t len = MAX_LINE_LENGTH + 2;
+        text.lines[i] = malloc(len);
+        ssize_t read = getline(&text.lines[i], &len, stdin);
+        text.lines[i] = realloc(text.lines[i], read + 1);
+
     }
-    scanf(".\n");
+    getchar(); getchar(); // .\n
 }
 
 void cmd_delete(int n1, int n2) {
@@ -139,6 +154,7 @@ void cmd_print(int n1, int n2) {
 void cmd_undo(int n) {
     history_entry* cur;
     while ((cur = history_undo) != NULL && n-- > 0) {
+        int curr_len = text.length;
         if (cur->action == CHANGE) {
             history_swap(cur);
         } else {
@@ -152,7 +168,6 @@ void cmd_undo(int n) {
             }
             memcpy(&text.lines[cur->n1], cur->buffer, sizeof(line) * buf_length);
         }
-        int curr_len = text.length;
         text.length = cur->prev_length;
         cur->prev_length = curr_len;
         history_undo = history_undo->prev;
