@@ -7,9 +7,7 @@
 #include <stdio.h>
 #include <memory.h>
 
-#define MAX_CMD_LENGTH    16
-#define MAX_LINE_LENGTH   1024
-#define INITIAL_TEXT_SIZE 512
+#define INITIAL_TEXT_SIZE 1024
 
 /* Types */
 typedef char* line;
@@ -41,6 +39,8 @@ int history_redo_size = 0;
 history_entry* history_undo = NULL;
 history_entry* history_redo = NULL;
 
+size_t MAX_LINE_LENGTH = 1026;
+
 /* Methods */
 void buffer_grow() {
     text.size *= 2;
@@ -60,7 +60,9 @@ void history_swap(history_entry* entry, int is_redo) {
         line* source = is_redo ? &entry->buffer[entry->buf_length] : &text.lines[entry->n1 + entry->buf_length];
         line* copy_to = is_redo ? &text.lines[entry->n1 + entry->buf_length] : &entry->buffer[entry->buf_length];
         memcpy(copy_to, source, sizeof(line) * zero_len);
-        memset(source, 0, sizeof(line) * zero_len);
+        if (!is_redo) {
+            memset(source, 0, sizeof(line) * zero_len);
+        }
     }
 }
 
@@ -96,12 +98,8 @@ void history_push(enum history_action action, int n1, int n2) {
     if (buf_length < 0) buf_length = 0;
 
     if (action == CHANGE) {
-        // Allocate a full-sized buffer and zero the excess area (needed for history_swap)
+        // Allocate a full-sized buffer (needed for history_swap)
         buffer = malloc(sizeof(line) * block_length);
-        int zero_length = block_length - buf_length;
-        if (zero_length > 0) {
-            memset(&buffer[buf_length], 0, sizeof(line) * zero_length);
-        }
     } else {
         if (buf_length > 0) {
             buffer = malloc(sizeof(line) * buf_length);
@@ -145,11 +143,9 @@ void cmd_change(int n1, int n2) {
     while (n2 > text.size) buffer_grow();
     if (n2 >= text.length) text.length = n2 + 1;
     for (int i = n1; i <= n2; i++) {
-        size_t len = MAX_LINE_LENGTH + 2;
-        text.lines[i] = malloc(len);
-        ssize_t read = getline(&text.lines[i], &len, stdin);
+        text.lines[i] = malloc(MAX_LINE_LENGTH);
+        ssize_t read = getline(&text.lines[i], &MAX_LINE_LENGTH, stdin);
         text.lines[i] = realloc(text.lines[i], read + 1);
-
     }
     getchar(); getchar(); // .\n
 }
@@ -164,7 +160,7 @@ void cmd_print(int n1, int n2) {
         if (i >= 0 && i < text.length && text.lines[i] != NULL) {
             fputs(text.lines[i], stdout);
         } else {
-            fputs(".\n", stdout);
+            putc('.', stdout); putc('\n', stdout);
         }
     }
 }
@@ -229,32 +225,36 @@ void history_move() {
 }
 
 int parse_command() {
-    // Assumption: input is not malformed
-    char input[MAX_CMD_LENGTH];
-    (void) fgets(input, MAX_CMD_LENGTH, stdin);
-    #ifdef DEBUG
-        fputs(input, stdout);
-    #endif
-    if (input[0] == 'q') return 1;
-    char* c;
-    int n1 = (int) strtol(input, &c, 10);
-    if (*c == 'u') {
+    char c = (char) getchar();
+    if (c == 'q') return 1;
+    int n1 = c - '0';
+    while ((c = (char) getchar()) && c >= '0' && c <= '9') {
+        n1 = n1 * 10 + c - '0';
+    }
+    if (c == 'u') {
         history_count += n1;
         if (history_count > history_undo_size) history_count = history_undo_size;
-    } else if (*c == 'r') {
+        getchar(); // \n
+    } else if (c == 'r') {
         history_count -= n1;
         if (-history_count > history_redo_size) history_count = -history_redo_size;
+        getchar(); // \n
     } else {
         if (history_count != 0) history_move();
         n1 -= 1;
-        int n2 = (int) strtol(c + 1, &c, 10) - 1;
-        if (*c == 'c') cmd_change(n1, n2);
-
-        else if (*c == 'd') cmd_delete(n1, n2);
-        else if (*c == 'p') cmd_print(n1, n2);
+        int n2 = getchar() - '0';
+        while ((c = (char) getchar()) && c >= '0' && c <= '9') {
+            n2 = n2 * 10 + c - '0';
+        }
+        n2 -= 1;
+        getchar(); // \n
+        if (c == 'c') cmd_change(n1, n2);
+        else if (c == 'd') cmd_delete(n1, n2);
+        else if (c == 'p') cmd_print(n1, n2);
     }
     return 0;
 }
+
 
 void cleanup() {
     history_undo_clear();
@@ -266,7 +266,7 @@ void cleanup() {
 }
 
 int main() {
-    text = (line_buffer) { .size = INITIAL_TEXT_SIZE, .length = 0, .lines = calloc(INITIAL_TEXT_SIZE, sizeof(line)) };
+    text = (line_buffer) { .size = INITIAL_TEXT_SIZE, .length = 0, .lines = malloc(sizeof(line) * INITIAL_TEXT_SIZE) };
 
     int quit;
     do {
