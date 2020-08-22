@@ -7,7 +7,8 @@
 #include <stdio.h>
 #include <memory.h>
 
-#define INITIAL_TEXT_SIZE 1024
+#define INITIAL_TEXT_SIZE    1024
+#define INITIAL_HISTORY_SIZE 64
 
 /* Types */
 typedef char* line;
@@ -28,16 +29,20 @@ typedef struct history_entry {
     line* buffer;
     int buf_length;
 
-    struct history_entry* prev;
+    // struct history_entry* prev;
 } history_entry;
+
+typedef struct {
+    int size;
+    int length;
+    int cursor; // index of the first redoable action
+    history_entry* entries;
+} history_arr;
 
 /* Globals */
 line_buffer text;
-int history_count = 0;
-int history_undo_size = 0;
-int history_redo_size = 0;
-history_entry* history_undo = NULL;
-history_entry* history_redo = NULL;
+int history_move_count = 0;
+history_arr history;
 
 size_t MAX_LINE_LENGTH = 1026;
 
@@ -45,8 +50,15 @@ size_t MAX_LINE_LENGTH = 1026;
 void buffer_grow() {
     text.size *= 2;
     line* new_lines = realloc(text.lines, sizeof(line) * text.size);
-    if (new_lines == NULL) exit(16);
+    if (new_lines == NULL) exit(1);
     text.lines = new_lines;
+}
+
+void history_grow() {
+    history.size *= 2;
+    history_entry* new_entries = realloc(history.entries, sizeof(struct history_entry) * history.size);
+    if (new_entries == NULL) exit(1);
+    history.entries = new_entries;
 }
 
 void history_swap(history_entry* entry, int is_redo) {
@@ -63,22 +75,11 @@ void history_swap(history_entry* entry, int is_redo) {
     }
 }
 
-void history_undo_clear() {
-    history_entry* cur;
-    while ((cur = history_undo) != NULL) {
-        history_undo = history_undo->prev;
-        free(cur);
-    }
-    history_undo_size = 0;
-}
-
 void history_redo_clear() {
-    history_entry* cur;
-    while ((cur = history_redo) != NULL) {
-        history_redo = history_redo->prev;
-        free(cur);
+    for (int i = history.cursor; i < history.length; i++) {
+        free(history.entries[i].buffer);
     }
-    history_redo_size = 0;
+    history.length = history.cursor;
 }
 
 void history_push(enum history_action action, int n1, int n2) {
@@ -107,18 +108,21 @@ void history_push(enum history_action action, int n1, int n2) {
 
     memcpy(buffer, &text.lines[n1], sizeof(line) * buf_length);
 
-    history_entry* prev = history_undo;
-    history_undo = malloc(sizeof(history_entry));
-    *history_undo = (history_entry) {
+    if (history.cursor + 1 >= history.size) {
+        history_grow();
+    }
+    history.entries[history.cursor] = (history_entry) {
         .action = action,
         .n1 = n1,
         .n2 = n2,
         .prev_length = text.length,
         .buffer = buffer,
-        .buf_length = buf_length,
-        .prev = prev
+        .buf_length = buf_length
     };
-    history_undo_size++;
+    history.cursor++;
+    if (history.cursor >= history.length) {
+        history.length = history.cursor;
+    }
 }
 
 void text_delete(int n1, int n2) {
@@ -163,8 +167,9 @@ void cmd_print(int n1, int n2) {
 }
 
 void cmd_undo(int n) {
-    history_entry* cur;
-    while ((cur = history_undo) != NULL && n-- > 0) {
+    for (int i = 0; i < n; i++) {
+        if (history.cursor <= 0) break;
+        history_entry* cur = &history.entries[--history.cursor];
         int curr_len = text.length;
         if (cur->action == CHANGE) {
             history_swap(cur, 0);
@@ -182,15 +187,13 @@ void cmd_undo(int n) {
         }
         text.length = cur->prev_length;
         cur->prev_length = curr_len;
-        history_undo = history_undo->prev;
-        cur->prev = history_redo;
-        history_redo = cur;
     }
 }
 
 void cmd_redo(int n) {
-    history_entry* cur;
-    while ((cur = history_redo) != NULL && n-- > 0) {
+    for (int i = 0; i < n; i++) {
+        if (history.cursor >= history.length) break;
+        history_entry* cur = &history.entries[history.cursor++];
         int curr_len = text.length;
         if (cur->action == CHANGE) {
             history_swap(cur, 1);
@@ -199,21 +202,16 @@ void cmd_redo(int n) {
         }
         text.length = cur->prev_length;
         cur->prev_length = curr_len;
-        history_redo = history_redo->prev;
-        cur->prev = history_undo;
-        history_undo = cur;
     }
 }
 
 void history_move() {
-    if (history_count > 0) {
-        cmd_undo(history_count);
+    if (history_move_count > 0) {
+        cmd_undo(history_move_count);
     } else {
-        cmd_redo(-history_count);
+        cmd_redo(-history_move_count);
     }
-    history_undo_size -= history_count;
-    history_redo_size += history_count;
-    history_count = 0;
+    history_move_count = 0;
 }
 
 int parse_command() {
@@ -224,15 +222,15 @@ int parse_command() {
         n1 = n1 * 10 + c - '0';
     }
     if (c == 'u') {
-        history_count += n1;
-        if (history_count > history_undo_size) history_count = history_undo_size;
+        history_move_count += n1;
+        if (history_move_count > history.cursor) history_move_count = history.cursor;
         getchar(); // \n
     } else if (c == 'r') {
-        history_count -= n1;
-        if (-history_count > history_redo_size) history_count = -history_redo_size;
+        history_move_count -= n1;
+        int max_redoable = history.length - history.cursor;
+        if (-history_move_count > max_redoable) history_move_count = -max_redoable;
         getchar(); // \n
     } else {
-        if (history_count != 0) history_move();
         n1 -= 1;
         int n2 = getchar() - '0';
         while ((c = (char) getchar()) && c >= '0' && c <= '9') {
@@ -240,6 +238,7 @@ int parse_command() {
         }
         n2 -= 1;
         getchar(); // \n
+        if (history_move_count != 0) history_move();
         if (c == 'c') cmd_change(n1, n2);
         else if (c == 'd') cmd_delete(n1, n2);
         else if (c == 'p') cmd_print(n1, n2);
@@ -247,24 +246,24 @@ int parse_command() {
     return 0;
 }
 
-
-void cleanup() {
-    history_undo_clear();
-    history_redo_clear();
-    for (int i = 0; i < text.length; i++) {
-        free(text.lines[i]);
-    }
-    free(text.lines);
-}
-
 int main() {
-    text = (line_buffer) { .size = INITIAL_TEXT_SIZE, .length = 0, .lines = malloc(sizeof(line) * INITIAL_TEXT_SIZE) };
+    text = (line_buffer) {
+        .size = INITIAL_TEXT_SIZE,
+        .length = 0,
+        .lines = malloc(sizeof(line) * INITIAL_TEXT_SIZE)
+    };
+
+    history = (history_arr) {
+        .size = INITIAL_HISTORY_SIZE,
+        .length = 0,
+        .cursor = 0,
+        .entries = malloc(sizeof(history_entry) * INITIAL_HISTORY_SIZE)
+    };
 
     int quit;
     do {
         quit = parse_command();
     } while (!quit);
 
-    cleanup();
     return 0;
 }
