@@ -60,15 +60,12 @@ void history_swap(history_entry* entry, int is_redo) {
         line* source = is_redo ? &entry->buffer[entry->buf_length] : &text.lines[entry->n1 + entry->buf_length];
         line* copy_to = is_redo ? &text.lines[entry->n1 + entry->buf_length] : &entry->buffer[entry->buf_length];
         memcpy(copy_to, source, sizeof(line) * zero_len);
-        if (!is_redo) {
-            memset(source, 0, sizeof(line) * zero_len);
-        }
     }
 }
 
 void history_undo_clear() {
-    while (history_undo != NULL) {
-        history_entry* cur = history_undo;
+    history_entry* cur;
+    while ((cur = history_undo) != NULL) {
         history_undo = history_undo->prev;
         free(cur);
     }
@@ -76,8 +73,8 @@ void history_undo_clear() {
 }
 
 void history_redo_clear() {
-    while (history_redo != NULL) {
-        history_entry* cur = history_redo;
+    history_entry* cur;
+    while ((cur = history_redo) != NULL) {
         history_redo = history_redo->prev;
         free(cur);
     }
@@ -172,7 +169,6 @@ void cmd_undo(int n) {
         if (cur->action == CHANGE) {
             history_swap(cur, 0);
         } else {
-            int block_length = cur->n2 - cur->n1 + 1;
             if (cur->n1 < text.length) {
                 memmove(
                     &text.lines[cur->n2 + 1],
@@ -183,7 +179,6 @@ void cmd_undo(int n) {
             if (cur->buffer != NULL) {
                 memcpy(&text.lines[cur->n1], cur->buffer, sizeof(line) * cur->buf_length);
             }
-            memset(&text.lines[cur->n1 + block_length], 0, sizeof(line) * (block_length - cur->buf_length));
         }
         text.length = cur->prev_length;
         cur->prev_length = curr_len;
@@ -211,9 +206,6 @@ void cmd_redo(int n) {
 }
 
 void history_move() {
-    #ifdef DEBUG
-        fprintf(stdout, ">>> history_move: %d\n", history_count);
-    #endif
     if (history_count > 0) {
         cmd_undo(history_count);
     } else {
