@@ -76,9 +76,7 @@ void history_swap(history_entry* entry, int is_redo, int is_next_cmd_edit) {
         }
     } else {
         // No need to swap, the history buffer will be cleared immediately afterwards
-        for (int i = 0; i < entry->buf_length; i++) {
-            text.lines[entry->n1 + i] = entry->buffer[i];
-        }
+        memcpy(&text.lines[entry->n1], entry->buffer, sizeof(line) * entry->buf_length);
     }
 }
 
@@ -136,9 +134,9 @@ void text_delete(int n1, int n2) {
     if (n1 >= text.length) return;
     if (n2 + 1 < text.length) {
         memmove(
-                &text.lines[n1],
-                &text.lines[n2 + 1],
-                sizeof(line) * (text.length - n2 - 1)
+            &text.lines[n1],
+            &text.lines[n2 + 1],
+            sizeof(line) * (text.length - n2 - 1)
         );
         text.length -= (n2 - n1 + 1);
     } else {
