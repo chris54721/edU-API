@@ -64,6 +64,7 @@ void history_grow() {
 void history_redo_clear() {
     for (int i = history.cursor; i < history.length; i++) {
         free(history.entries[i].orig_buffer);
+        if (history.entries[i].new_buffer != NULL) free(history.entries[i].new_buffer);
     }
     history.length = history.cursor;
 }
@@ -81,22 +82,14 @@ void history_push(enum history_action action, int n1, int n2) {
     }
     if (buf_length < 0) buf_length = 0;
 
-    if (action == CHANGE) {
-        // Allocate a full-sized buffer (needed for history_swap)
-        buffer = malloc(sizeof(line) * block_length);
+    if (buf_length > 0) {
+        buffer = malloc(sizeof(line) * buf_length);
+        memcpy(buffer, &text.lines[n1], sizeof(line) * buf_length);
     } else {
-        if (buf_length > 0) {
-            buffer = malloc(sizeof(line) * buf_length);
-        } else {
-            buffer = NULL;
-        }
+        buffer = NULL;
     }
 
-    memcpy(buffer, &text.lines[n1], sizeof(line) * buf_length);
-
-    if (history.cursor + 1 >= history.size) {
-        history_grow();
-    }
+    if (history.cursor + 1 >= history.size) history_grow();
     history.entries[history.cursor] = (history_entry) {
         .action = action,
         .n1 = n1,
@@ -110,6 +103,10 @@ void history_push(enum history_action action, int n1, int n2) {
     if (history.cursor >= history.length) {
         history.length = history.cursor;
     }
+}
+
+int is_change_skippable(history_entry* entry, history_entry* next) {
+    return next->action == CHANGE && next->new_buffer != NULL && next->n1 <= entry->n1 && next->n2 >= entry->n2;
 }
 
 void text_delete(int n1, int n2) {
@@ -162,6 +159,11 @@ void cmd_undo(int n) {
             if (cur->new_buffer == NULL) {
                 cur->new_buffer = malloc(sizeof(line) * (cur->n2 - cur->n1 + 1));
                 memcpy(cur->new_buffer, &text.lines[cur->n1], sizeof(line) * (cur->n2 - cur->n1 + 1));
+                if (i < n-1 && is_change_skippable(cur, cur - 1)) {
+                    text.length = cur->prev_length;
+                    cur->prev_length = curr_len;
+                    continue;
+                }
             }
         } else {
             if (cur->n1 < text.length) {
@@ -186,7 +188,7 @@ void cmd_redo(int n) {
         history_entry* cur = &history.entries[history.cursor++];
         int curr_len = text.length;
         if (cur->action == CHANGE) {
-            if (cur->new_buffer != NULL) {
+            if (i == n - 1 || !is_change_skippable(cur, cur + 1)) {
                 memcpy(&text.lines[cur->n1], cur->new_buffer, sizeof(line) * (cur->n2 - cur->n1 + 1));
             }
         } else {
