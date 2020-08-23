@@ -61,17 +61,24 @@ void history_grow() {
     history.entries = new_entries;
 }
 
-void history_swap(history_entry* entry, int is_redo) {
-    for (int i = 0; i < entry->buf_length; i++) {
-        line tmp = entry->buffer[i];
-        entry->buffer[i] = text.lines[entry->n1 + i];
-        text.lines[entry->n1 + i] = tmp;
-    }
-    int zero_len = (entry->n2 - entry->n1 + 1) - entry->buf_length;
-    if (zero_len > 0) {
-        line* source = is_redo ? &entry->buffer[entry->buf_length] : &text.lines[entry->n1 + entry->buf_length];
-        line* copy_to = is_redo ? &text.lines[entry->n1 + entry->buf_length] : &entry->buffer[entry->buf_length];
-        memcpy(copy_to, source, sizeof(line) * zero_len);
+void history_swap(history_entry* entry, int is_redo, int is_next_cmd_edit) {
+    int extra_len = (entry->n2 - entry->n1 + 1) - entry->buf_length;
+    if (!is_next_cmd_edit) {
+        for (int i = 0; i < entry->buf_length; i++) {
+            line tmp = entry->buffer[i];
+            entry->buffer[i] = text.lines[entry->n1 + i];
+            text.lines[entry->n1 + i] = tmp;
+        }
+        if (extra_len > 0) {
+            line* source = is_redo ? &entry->buffer[entry->buf_length] : &text.lines[entry->n1 + entry->buf_length];
+            line* copy_to = is_redo ? &text.lines[entry->n1 + entry->buf_length] : &entry->buffer[entry->buf_length];
+            memcpy(copy_to, source, sizeof(line) * extra_len);
+        }
+    } else {
+        // No need to swap, the history buffer will be cleared immediately afterwards
+        int copy_len = entry->buf_length;
+        if (is_redo) copy_len += extra_len;
+        memcpy(&text.lines[entry->n1], entry->buffer, sizeof(line) * copy_len);
     }
 }
 
@@ -166,13 +173,13 @@ void cmd_print(int n1, int n2) {
     }
 }
 
-void cmd_undo(int n) {
+void cmd_undo(int n, int is_next_cmd_edit) {
     for (int i = 0; i < n; i++) {
         if (history.cursor <= 0) break;
         history_entry* cur = &history.entries[--history.cursor];
         int curr_len = text.length;
         if (cur->action == CHANGE) {
-            history_swap(cur, 0);
+            history_swap(cur, 0, is_next_cmd_edit);
         } else {
             if (cur->n1 < text.length) {
                 memmove(
@@ -190,13 +197,13 @@ void cmd_undo(int n) {
     }
 }
 
-void cmd_redo(int n) {
+void cmd_redo(int n, int is_next_cmd_edit) {
     for (int i = 0; i < n; i++) {
         if (history.cursor >= history.length) break;
         history_entry* cur = &history.entries[history.cursor++];
         int curr_len = text.length;
         if (cur->action == CHANGE) {
-            history_swap(cur, 1);
+            history_swap(cur, 1, is_next_cmd_edit);
         } else {
             text_delete(cur->n1, cur->n2);
         }
@@ -205,11 +212,11 @@ void cmd_redo(int n) {
     }
 }
 
-void history_move() {
+void history_move(int is_next_cmd_edit) {
     if (history_move_count > 0) {
-        cmd_undo(history_move_count);
+        cmd_undo(history_move_count, is_next_cmd_edit);
     } else {
-        cmd_redo(-history_move_count);
+        cmd_redo(-history_move_count, is_next_cmd_edit);
     }
     history_move_count = 0;
 }
@@ -238,7 +245,7 @@ int parse_command() {
         }
         n2 -= 1;
         getchar(); // \n
-        if (history_move_count != 0) history_move();
+        if (history_move_count != 0) history_move(c == 'c' || c == 'd');
         if (c == 'c') cmd_change(n1, n2);
         else if (c == 'd') cmd_delete(n1, n2);
         else if (c == 'p') cmd_print(n1, n2);
