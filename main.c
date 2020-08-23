@@ -63,7 +63,7 @@ void history_grow() {
 
 void history_swap(history_entry* entry, int is_redo, int is_next_cmd_edit) {
     int extra_len = (entry->n2 - entry->n1 + 1) - entry->buf_length;
-    if (!is_next_cmd_edit) {
+    if (is_redo || !is_next_cmd_edit) {
         for (int i = 0; i < entry->buf_length; i++) {
             line tmp = entry->buffer[i];
             entry->buffer[i] = text.lines[entry->n1 + i];
@@ -76,9 +76,9 @@ void history_swap(history_entry* entry, int is_redo, int is_next_cmd_edit) {
         }
     } else {
         // No need to swap, the history buffer will be cleared immediately afterwards
-        int copy_len = entry->buf_length;
-        if (is_redo) copy_len += extra_len;
-        memcpy(&text.lines[entry->n1], entry->buffer, sizeof(line) * copy_len);
+        for (int i = 0; i < entry->buf_length; i++) {
+            text.lines[entry->n1 + i] = entry->buffer[i];
+        }
     }
 }
 
