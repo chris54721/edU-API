@@ -26,10 +26,10 @@ typedef struct history_entry {
     int n1;
     int n2;
     int prev_length;
-    line* buffer;
-    int buf_length;
 
-    // struct history_entry* prev;
+    line* orig_buffer;
+    int orig_buf_length;
+    line* new_buffer;
 } history_entry;
 
 typedef struct {
@@ -61,28 +61,9 @@ void history_grow() {
     history.entries = new_entries;
 }
 
-void history_swap(history_entry* entry, int is_redo, int is_next_cmd_edit) {
-    int extra_len = (entry->n2 - entry->n1 + 1) - entry->buf_length;
-    if (is_redo || !is_next_cmd_edit) {
-        for (int i = 0; i < entry->buf_length; i++) {
-            line tmp = entry->buffer[i];
-            entry->buffer[i] = text.lines[entry->n1 + i];
-            text.lines[entry->n1 + i] = tmp;
-        }
-        if (extra_len > 0) {
-            line* source = is_redo ? &entry->buffer[entry->buf_length] : &text.lines[entry->n1 + entry->buf_length];
-            line* copy_to = is_redo ? &text.lines[entry->n1 + entry->buf_length] : &entry->buffer[entry->buf_length];
-            memcpy(copy_to, source, sizeof(line) * extra_len);
-        }
-    } else {
-        // No need to swap, the history buffer will be cleared immediately afterwards
-        memcpy(&text.lines[entry->n1], entry->buffer, sizeof(line) * entry->buf_length);
-    }
-}
-
 void history_redo_clear() {
     for (int i = history.cursor; i < history.length; i++) {
-        free(history.entries[i].buffer);
+        free(history.entries[i].orig_buffer);
     }
     history.length = history.cursor;
 }
@@ -121,8 +102,9 @@ void history_push(enum history_action action, int n1, int n2) {
         .n1 = n1,
         .n2 = n2,
         .prev_length = text.length,
-        .buffer = buffer,
-        .buf_length = buf_length
+        .orig_buffer = buffer,
+        .orig_buf_length = buf_length,
+        .new_buffer = NULL
     };
     history.cursor++;
     if (history.cursor >= history.length) {
@@ -171,13 +153,16 @@ void cmd_print(int n1, int n2) {
     }
 }
 
-void cmd_undo(int n, int is_next_cmd_edit) {
+void cmd_undo(int n) {
     for (int i = 0; i < n; i++) {
         if (history.cursor <= 0) break;
         history_entry* cur = &history.entries[--history.cursor];
         int curr_len = text.length;
         if (cur->action == CHANGE) {
-            history_swap(cur, 0, is_next_cmd_edit);
+            if (cur->new_buffer == NULL) {
+                cur->new_buffer = malloc(sizeof(line) * (cur->n2 - cur->n1 + 1));
+                memcpy(cur->new_buffer, &text.lines[cur->n1], sizeof(line) * (cur->n2 - cur->n1 + 1));
+            }
         } else {
             if (cur->n1 < text.length) {
                 memmove(
@@ -186,22 +171,24 @@ void cmd_undo(int n, int is_next_cmd_edit) {
                     sizeof(line) * (text.length - cur->n1)
                 );
             }
-            if (cur->buffer != NULL) {
-                memcpy(&text.lines[cur->n1], cur->buffer, sizeof(line) * cur->buf_length);
-            }
+        }
+        if (cur->orig_buffer != NULL) {
+            memcpy(&text.lines[cur->n1], cur->orig_buffer, sizeof(line) * cur->orig_buf_length);
         }
         text.length = cur->prev_length;
         cur->prev_length = curr_len;
     }
 }
 
-void cmd_redo(int n, int is_next_cmd_edit) {
+void cmd_redo(int n) {
     for (int i = 0; i < n; i++) {
         if (history.cursor >= history.length) break;
         history_entry* cur = &history.entries[history.cursor++];
         int curr_len = text.length;
         if (cur->action == CHANGE) {
-            history_swap(cur, 1, is_next_cmd_edit);
+            if (cur->new_buffer != NULL) {
+                memcpy(&text.lines[cur->n1], cur->new_buffer, sizeof(line) * (cur->n2 - cur->n1 + 1));
+            }
         } else {
             text_delete(cur->n1, cur->n2);
         }
@@ -210,11 +197,11 @@ void cmd_redo(int n, int is_next_cmd_edit) {
     }
 }
 
-void history_move(int is_next_cmd_edit) {
+void history_move() {
     if (history_move_count > 0) {
-        cmd_undo(history_move_count, is_next_cmd_edit);
+        cmd_undo(history_move_count);
     } else {
-        cmd_redo(-history_move_count, is_next_cmd_edit);
+        cmd_redo(-history_move_count);
     }
     history_move_count = 0;
 }
@@ -243,7 +230,7 @@ int parse_command() {
         }
         n2 -= 1;
         getchar(); // \n
-        if (history_move_count != 0) history_move(c == 'c' || c == 'd');
+        if (history_move_count != 0) history_move();
         if (c == 'c') cmd_change(n1, n2);
         else if (c == 'd') cmd_delete(n1, n2);
         else if (c == 'p') cmd_print(n1, n2);
