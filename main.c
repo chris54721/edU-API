@@ -69,10 +69,10 @@ void history_redo_clear() {
     history.length = history.cursor;
 }
 
-void history_push(enum history_action action, int n1, int n2) {
+history_entry* history_push(enum history_action action, int n1, int n2) {
     history_redo_clear();
     int block_length = n2 - n1 + 1;
-    line* buffer;
+    line* orig_buffer;
     int buf_length;
 
     if (n1 + block_length > text.length) {
@@ -83,10 +83,15 @@ void history_push(enum history_action action, int n1, int n2) {
     if (buf_length < 0) buf_length = 0;
 
     if (buf_length > 0) {
-        buffer = malloc(sizeof(line) * buf_length);
-        memcpy(buffer, &text.lines[n1], sizeof(line) * buf_length);
+        orig_buffer = malloc(sizeof(line) * buf_length);
+        memcpy(orig_buffer, &text.lines[n1], sizeof(line) * buf_length);
     } else {
-        buffer = NULL;
+        orig_buffer = NULL;
+    }
+
+    line* new_buffer = NULL;
+    if (action == CHANGE) {
+        new_buffer = malloc(sizeof(line) * (n2 - n1 + 1));
     }
 
     if (history.cursor + 1 >= history.size) history_grow();
@@ -95,18 +100,19 @@ void history_push(enum history_action action, int n1, int n2) {
         .n1 = n1,
         .n2 = n2,
         .prev_length = text.length,
-        .orig_buffer = buffer,
+        .orig_buffer = orig_buffer,
         .orig_buf_length = buf_length,
-        .new_buffer = NULL
+        .new_buffer = new_buffer
     };
     history.cursor++;
     if (history.cursor >= history.length) {
         history.length = history.cursor;
     }
+    return &history.entries[history.cursor - 1];
 }
 
 int is_change_skippable(history_entry* entry, history_entry* next) {
-    return next->action == CHANGE && next->new_buffer != NULL && next->n1 <= entry->n1 && next->n2 >= entry->n2;
+    return next->action == CHANGE && next->n1 <= entry->n1 && next->n2 >= entry->n2;
 }
 
 void text_delete(int n1, int n2) {
@@ -124,13 +130,14 @@ void text_delete(int n1, int n2) {
 }
 
 void cmd_change(int n1, int n2) {
-    history_push(CHANGE, n1, n2);
+    history_entry* entry = history_push(CHANGE, n1, n2);
     while (n2 > text.size) buffer_grow();
     if (n2 >= text.length) text.length = n2 + 1;
     for (int i = n1; i <= n2; i++) {
         text.lines[i] = malloc(MAX_LINE_LENGTH);
         ssize_t read = getline(&text.lines[i], &MAX_LINE_LENGTH, stdin);
         text.lines[i] = realloc(text.lines[i], read + 1);
+        entry->new_buffer[i - entry->n1] = text.lines[i];
     }
     getchar(); getchar(); // .\n
 }
@@ -156,14 +163,10 @@ void cmd_undo(int n) {
         history_entry* cur = &history.entries[--history.cursor];
         int curr_len = text.length;
         if (cur->action == CHANGE) {
-            if (cur->new_buffer == NULL) {
-                cur->new_buffer = malloc(sizeof(line) * (cur->n2 - cur->n1 + 1));
-                memcpy(cur->new_buffer, &text.lines[cur->n1], sizeof(line) * (cur->n2 - cur->n1 + 1));
-                if (i < n-1 && is_change_skippable(cur, cur - 1)) {
-                    text.length = cur->prev_length;
-                    cur->prev_length = curr_len;
-                    continue;
-                }
+            if (i < n-1 && is_change_skippable(cur, cur - 1)) {
+                text.length = cur->prev_length;
+                cur->prev_length = curr_len;
+                continue;
             }
         } else {
             if (cur->n1 < text.length) {
